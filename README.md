@@ -31,3 +31,5 @@ cp procs/pyc-proc.py  ${YOU_DIR_HOME_DIR}/procs/
 ![image-20250402095555846](imgs/image-20250402095555846.png)
 
 ![image-20250402095755641](imgs/image-20250402095755641.png)
+
+**press Ctrl+F5 to decompile the pyc file**
