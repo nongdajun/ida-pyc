@@ -37,18 +37,21 @@ def load_file(li, neflags, format):
     li.seek(0)
     buf = li.read()
 
-    if not buf or len(buf)<16:
+    size = len(buf)
+
+    if size < 16:
         return 0
 
     # Select the PC processor module
     idaapi.set_processor_type("Pyc", idc.SETPROC_LOADER_NON_FATAL)
 
-    #idaapi.add_segm_ex(seg, "pyc", "DATA", 0)
-
     # TODO: make segments for stack, memory, storage
 
     # Copy the bytes
-    idaapi.mem2base(buf, 0, len(buf))
+    idaapi.mem2base(buf, 0, size)
+
+    #idc.make_array(0, 4)
+    #idaapi.set_name(0, 'MAGIC')
 
     seg_magic = idaapi.segment_t()
     seg_magic.start_ea = 0
@@ -82,7 +85,7 @@ def load_file(li, neflags, format):
                                    show_filename=True,
                                    is_graal=is_graal)
 
-    idaapi.set_segment_cmt(seg_magic, f"{h_out.getvalue()}\nPress [Ctrl+F5] to decompile...\n", 0)
+    idaapi.set_segment_cmt(seg_magic, f"{fmt_cmt(h_out.getvalue())}\nPress [Ctrl+F5] to decompile...\n", 0)
 
     class DocstringViewer(idaapi.Form):
         """A form that displays a docstring."""
@@ -120,6 +123,8 @@ def load_file(li, neflags, format):
 
     idaapi.add_hotkey("Ctrl+F5", _ctrl_f5_pressed)
 
+    setattr(idaapi, 'co_map', {})
+
     def walk_co_func(search_starts_ea, co_obj):
         f_ea = idaapi.find_bytes(co_obj.co_code, search_starts_ea)
         n_ea = f_ea + 1
@@ -132,6 +137,7 @@ def load_file(li, neflags, format):
             seg.start_ea = f_ea
             seg.end_ea = f_ea + size
             idaapi.add_segm_ex(seg, fn, "CODE", 0)
+            idaapi.co_map[idaapi.get_segm_num(f_ea)] = (co_obj, seg.start_ea, seg.end_ea-1)
             if search_starts_ea == 0:
                 idaapi.add_entry(0, f_ea, "_start", 1)
                 idaapi.add_func(f_ea)
@@ -141,7 +147,7 @@ def load_file(li, neflags, format):
             # Mark for analysis
             idc.AutoMark(f_ea, idc.AU_CODE)
             cmt = xdis.cross_dis.format_code_info(co_obj, tuple_version,is_graal=is_graal)
-            idaapi.set_func_cmt(f_ea, cmt, 0)
+            idaapi.set_func_cmt(f_ea, fmt_cmt(cmt), 0)
 
         for c in co_obj.co_consts:
             if xdis.disasm.iscode(c):
@@ -151,3 +157,7 @@ def load_file(li, neflags, format):
 
     return 1
 
+def fmt_cmt(s):
+    if s.startswith("# "):
+        return "\n".join([i[2:] for i in s.split("\n")])
+    return s

@@ -49,9 +49,15 @@ class PycProcessor(idaapi.processor_t):
     def notify_emu(self, insn):
         feature = insn.get_canon_feature()
         #print "emulating", insn.get_canon_mnem(), hex(feature)
-        mnemonic = insn.get_canon_mnem()
+        #mnemonic = insn.get_canon_mnem()
+
         flows = (feature & CF_STOP) == 0
-        if flows:
+
+        #if feature & CF_JUMP:
+        #    add_cref(insn.ea, insn.ea + 10, fl_JN)
+        #elif feature & CF_CALL:
+        #    add_cref(insn.ea, insn.ea + insn.size, fl_CN)
+        if flows and (feature & CF_JUMP) == 0:
             add_cref(insn.ea, insn.ea + insn.size, fl_F)
 
         if may_trace_sp():
@@ -82,9 +88,47 @@ class PycProcessor(idaapi.processor_t):
             return
 
         if self.last_extend_arg:
-            ctx.out_line(f"{op.value} ({op.value+self.last_extend_arg*256})")
+            op_value = op.value+self.last_extend_arg*256
+            ctx.out_line(f"{op.value}({op_value})", idaapi.COLOR_DSTR)
         else:
-            ctx.out_line(str(op.value))
+            op_value = op.value
+            ctx.out_line(str(op_value), idaapi.COLOR_DSTR)
+
+        op_type = op.type
+
+        if op_type != o_idpspec0:
+            addr = op.addr
+            if addr < self.current_co_start_ea or addr >self.current_co_end_ea:
+                co, self.current_co_start_ea, self.current_co_end_ea = idaapi.co_map[idaapi.get_segm_num(addr)]
+                self.current_co = co
+            else:
+                co = self.current_co
+            color = idaapi.COLOR_MACRO
+            if op_type == o_idpspec1:
+                txt = f'({co.co_consts[op_value]})'
+            elif op_type == o_idpspec2:
+                txt = f'({co.co_names[op_value]})'
+            elif op_type == o_idpspec3:
+                txt = f'({co.co_varnames[op_value]})'
+            elif op_type == o_near:
+                color = idaapi.COLOR_DEFAULT
+                target_addr = op_value+1+addr
+                idaapi.add_cref(addr-1, target_addr, idaapi.fl_JN)
+                txt = idaapi.get_name(target_addr)
+                if not txt:
+                    txt = f'({hex(target_addr)})'
+            elif op_type == o_far:
+                color = idaapi.COLOR_DEFAULT
+                target_addr = op_value+self.current_co_start_ea
+                idaapi.add_cref(addr - 1, target_addr, idaapi.fl_JN)
+                txt = idaapi.get_name(target_addr)
+                if not txt:
+                    txt = f'({hex(target_addr)})'
+            else:
+                color = idaapi.COLOR_ERROR
+                txt = '<UNKNOWN>'
+            ctx.out_line(f"\t {txt}", color)
+
         return
 
     def notify_out_insn(self, ctx):
@@ -111,12 +155,24 @@ class PycProcessor(idaapi.processor_t):
         insn.itype = itype
 
         op = insn[0]
-        op.type = o_idpspec0  # custom type
+        # custom type
+        if self.instruc_hasconst[itype]:
+            op.type = o_idpspec1
+        elif self.instruc_hasname[itype]:
+            op.type = o_idpspec2
+        elif self.instruc_haslocal[itype]:
+            op.type = o_idpspec3
+        elif self.instruc_hasjrel[itype]:
+            op.type = o_near
+        elif self.instruc_hasjabs[itype]:
+            op.type = o_far
+        else:
+            op.type = o_idpspec0
         op.dtype = dt_byte
         op_addr = ea + 1
         op.addr = op_addr  # operand is located after opcode
         op.value = idaapi.get_byte(op_addr)
-        op.specval = 1 if self.instruc_has_operand[itype] else 0
+        op.specval = 1 if self.instruc_hasoperand[itype] else 0
 
         if itype == self.icode_extend_arg:
             self.tmp_extend_arg = (self.tmp_extend_arg*256) + op.value
@@ -137,15 +193,17 @@ class PycProcessor(idaapi.processor_t):
             self.instruc_end = 1
             return -1
 
-        self.instruc_has_operand = [True if m_opcode.opname[i].startswith('<') else False for i in range(256)]
+        self.instruc_hasoperand = [True if m_opcode.opname[i].startswith('<') else False for i in range(256)]
         for aname in dir(m_opcode):
             if not aname.startswith('has'):
                 continue
             #print(aname)
             codes = getattr(m_opcode, aname)
+            setattr(self, f'instruc_{aname}', tuple(i in codes for i in range(256)))
             for code in codes:
-                self.instruc_has_operand[code] = True
-        #print(self.instruc_has_operand)
+                self.instruc_hasoperand[code] = True
+        self.instruc_hasoperand = tuple(self.instruc_hasoperand)
+        #print(self.instruc_hasoperand)
 
         for i in range(256):
             self.instruc.append({'name':f"<{i}>", 'feature':0})
@@ -156,11 +214,14 @@ class PycProcessor(idaapi.processor_t):
             if code in m_opcode.hasnargs: # has immediate
                 features |= CF_USE1
 
-            if name.startswith('JUMP_') or name in ('RETURN_VALUE', 'INVALID'):
+            if name == 'INVALID':
                 features |= CF_STOP
 
             if name.startswith('JUMP_'):
                 features |= CF_JUMP
+
+            if name == "CALL" or name.startswith('CALL_'):
+                features |= CF_CALL
 
             self.instruc[code] = {'name': name, 'feature':features}
 
@@ -193,6 +254,9 @@ class PycProcessor(idaapi.processor_t):
         self.has_rebuild_cf = False
         self.dst2src = {}
 
+        self.current_co = None
+        self.current_co_start_ea = 0
+        self.current_co_end_ea = 0
 
 
 def PROCESSOR_ENTRY():
