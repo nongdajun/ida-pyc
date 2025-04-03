@@ -46,10 +46,19 @@ class PycProcessor(idaapi.processor_t):
     def trace_sp(self, insn):
         pass
 
+    def notify_add_func(self, start_ea):
+        # print(f"ADD FUNC @{hex(start_ea)}, {idaapi.get_name(start_ea)}")
+        if start_ea not in idaapi.co_map:
+            return
+
+        import xdis
+        co = idaapi.co_map[start_ea][0]
+        is_graal = idaapi.pyc_info[2] in xdis.magics.GRAAL3_MAGICS
+        cmt = xdis.cross_dis.format_code_info(co, idaapi.pyc_info[0], is_graal=is_graal)
+        idaapi.set_func_cmt(start_ea, fmt_cmt(cmt), 0)
+
     def notify_emu(self, insn):
         feature = insn.get_canon_feature()
-        #print "emulating", insn.get_canon_mnem(), hex(feature)
-        #mnemonic = insn.get_canon_mnem()
 
         flows = (feature & CF_STOP) == 0
 
@@ -57,6 +66,7 @@ class PycProcessor(idaapi.processor_t):
         #    add_cref(insn.ea, insn.ea + 10, fl_JN)
         #elif feature & CF_CALL:
         #    add_cref(insn.ea, insn.ea + insn.size, fl_CN)
+
         if flows and (feature & CF_JUMP) == 0:
             add_cref(insn.ea, insn.ea + insn.size, fl_F)
 
@@ -66,22 +76,6 @@ class PycProcessor(idaapi.processor_t):
             else:
                 idc.recalc_spd(insn.ea)
         return 1
-
-    def notify_func_bounds(self, code, func_ea, max_func_end_ea):
-        """
-        find_func_bounds() finished its work
-        The module may fine tune the function bounds
-        args:
-          possible code - one of FIND_FUNC_XXX (check find_func_bounds)
-          func_ea - func start ea
-          max_func_end_ea (from the kernel's point of view)
-        returns: possible_return_code
-        """
-        #print hex(func_ea), hex(max_func_end_ea), code
-        #print print_insn_mnem(max_func_end_ea-1)
-        #append_func_tail(func, jump_addr, BADADDR)
-        #reanalyze_function(func)
-        return FIND_FUNC_OK
 
     def notify_out_operand(self, ctx, op):
         if op.specval == 0:
@@ -99,8 +93,13 @@ class PycProcessor(idaapi.processor_t):
         if op_type != o_idpspec0:
             addr = op.addr
             if addr < self.current_co_start_ea or addr >self.current_co_end_ea:
-                co, self.current_co_start_ea, self.current_co_end_ea = idaapi.co_map[idaapi.get_segm_num(addr)]
-                self.current_co = co
+                self.current_co = None
+                for o in idaapi.co_list:
+                    if addr >= o[1] and addr <= o[2]:
+                        co, self.current_co_start_ea, self.current_co_end_ea = o
+                        self.current_co = co
+                        # print(f"XXXXXXXXXX{co.co_name}XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+                        break
             else:
                 co = self.current_co
             color = idaapi.COLOR_MACRO
@@ -133,12 +132,6 @@ class PycProcessor(idaapi.processor_t):
 
     def notify_out_insn(self, ctx):
         ctx.out_mnemonic()
-        #if ctx.insn[0].type == o_idpspec0:
-        #    ctx.out_char(" ")
-        #    ctx.out_one_operand(0)
-        #elif ctx.insn[0].type == o_near:
-        #    ctx.out_char(" ")
-        #    ctx.out_one_operand(0)
         #ctx.set_gen_cmt(False)
         ctx.out_one_operand(0)
         ctx.flush_outbuf()
@@ -189,7 +182,7 @@ class PycProcessor(idaapi.processor_t):
 
         m_opcode = getattr(idaapi,'pyc_opcode',None)
         if not getattr(idaapi,'pyc_opcode',None):
-            self.instruc.append({'name':"X", 'feature':0})
+            self.instruc.append({'name':"<ERROR>", 'feature':0})
             self.instruc_end = 1
             return -1
 
@@ -214,7 +207,7 @@ class PycProcessor(idaapi.processor_t):
             if code in m_opcode.hasnargs: # has immediate
                 features |= CF_USE1
 
-            if name == 'INVALID':
+            if name in ('INVALID', 'RETURN_VALUE'):
                 features |= CF_STOP
 
             if name.startswith('JUMP_'):
@@ -236,8 +229,54 @@ class PycProcessor(idaapi.processor_t):
         self.instruc_end = len(self.instruc)
 
     def notify_assemble(self, ea, cs, ip, use32, line):
-        idaapi.warning("Error trying to assemble '%s': not supported" % line)
+        idaapi.warning("Assembler is not supported!")
         return None
+
+    def notify_newfile(self, filename):
+
+        idc.make_array(0, 4)
+        idaapi.set_name(0, 'MAGIC')
+
+        print(f"Fetching all code objects in {filename} ...")
+
+        setattr(idaapi, 'co_list', [])
+        setattr(idaapi, 'co_map', {})
+
+        import xdis
+
+        def walk_co_func(search_starts_ea, co_obj):
+            f_ea = idaapi.find_bytes(co_obj.co_code, search_starts_ea)
+            n_ea = f_ea + 1
+            if f_ea != idaapi.BADADDR:
+                size = len(co_obj.co_code)
+                n_ea = f_ea + size
+                fn = co_obj.co_name.replace("<", "_").replace(">", "_")
+                '''
+                seg = idaapi.segment_t()
+                # Create the segment
+                seg.start_ea = f_ea
+                seg.end_ea = f_ea + size
+                idaapi.add_segm_ex(seg, '', "CODE", 0)
+                '''
+                obj = (co_obj, f_ea, n_ea - 1)
+                idaapi.co_list.append(obj)
+                idaapi.co_map[f_ea] = obj
+                if search_starts_ea == 0:
+                    idaapi.add_entry(0, f_ea, "_start", False)
+                    # idaapi.add_func(f_ea)
+                else:
+                    # idaapi.add_func(f_ea, n_ea)
+                    idaapi.set_name(f_ea, fn)
+                # Mark for analysis
+                idaapi.auto_make_proc(f_ea)
+                # cmt = xdis.cross_dis.format_code_info(co_obj, tuple_version,is_graal=is_graal)
+                # idaapi.set_func_cmt(f_ea, fmt_cmt(cmt), 0)
+
+            for c in co_obj.co_consts:
+                if xdis.disasm.iscode(c):
+                    walk_co_func(n_ea, c)
+
+        walk_co_func(0, idaapi.pyc_info[3])
 
     def __init__(self):
         processor_t.__init__(self)
@@ -259,5 +298,12 @@ class PycProcessor(idaapi.processor_t):
         self.current_co_end_ea = 0
 
 
+def fmt_cmt(s):
+    if s.startswith("# "):
+        return "\n".join([i[2:] for i in s.split("\n")])
+    return s
+
+
 def PROCESSOR_ENTRY():
     return PycProcessor()
+

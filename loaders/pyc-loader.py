@@ -1,9 +1,8 @@
 
-# evm loader
+# pyc file loader
 
 import idaapi
 import idc
-import sys
 import io
 
 def accept_file(li, filename):
@@ -37,9 +36,9 @@ def load_file(li, neflags, format):
     li.seek(0)
     buf = li.read()
 
-    size = len(buf)
+    buf_size = len(buf)
 
-    if size < 16:
+    if buf_size < 16:
         return 0
 
     # Select the PC processor module
@@ -48,15 +47,12 @@ def load_file(li, neflags, format):
     # TODO: make segments for stack, memory, storage
 
     # Copy the bytes
-    idaapi.mem2base(buf, 0, size)
+    idaapi.mem2base(buf, 0, buf_size)
 
-    #idc.make_array(0, 4)
-    #idaapi.set_name(0, 'MAGIC')
-
-    seg_magic = idaapi.segment_t()
-    seg_magic.start_ea = 0
-    seg_magic.end_ea = 4
-    idaapi.add_segm_ex(seg_magic, ".magic", "MAGIC", 0)
+    seg_pyc = idaapi.segment_t()
+    seg_pyc.start_ea = 0
+    seg_pyc.end_ea = buf_size
+    idaapi.add_segm_ex(seg_pyc, ".pyc", None, 0)
 
     h_out = io.StringIO()
     (
@@ -85,7 +81,7 @@ def load_file(li, neflags, format):
                                    show_filename=True,
                                    is_graal=is_graal)
 
-    idaapi.set_segment_cmt(seg_magic, f"{fmt_cmt(h_out.getvalue())}\nPress [Ctrl+F5] to decompile...\n", 0)
+    idaapi.set_segment_cmt(seg_pyc, f"{fmt_cmt(h_out.getvalue())}\nPress [Ctrl+F5] to decompile...\n", 0)
 
     class DocstringViewer(idaapi.Form):
         """A form that displays a docstring."""
@@ -122,38 +118,6 @@ def load_file(li, neflags, format):
         f.Open()
 
     idaapi.add_hotkey("Ctrl+F5", _ctrl_f5_pressed)
-
-    setattr(idaapi, 'co_map', {})
-
-    def walk_co_func(search_starts_ea, co_obj):
-        f_ea = idaapi.find_bytes(co_obj.co_code, search_starts_ea)
-        n_ea = f_ea + 1
-        if f_ea != idaapi.BADADDR:
-            size = len(co_obj.co_code)
-            n_ea = f_ea + size
-            fn = co_obj.co_name.replace("<", "_").replace(">", "_")
-            seg = idaapi.segment_t()
-            # Create the segment
-            seg.start_ea = f_ea
-            seg.end_ea = f_ea + size
-            idaapi.add_segm_ex(seg, fn, "CODE", 0)
-            idaapi.co_map[idaapi.get_segm_num(f_ea)] = (co_obj, seg.start_ea, seg.end_ea-1)
-            if search_starts_ea == 0:
-                idaapi.add_entry(0, f_ea, "_start", 1)
-                idaapi.add_func(f_ea)
-            else:
-                idaapi.add_func(f_ea)
-                idaapi.set_name(f_ea, fn)
-            # Mark for analysis
-            idc.AutoMark(f_ea, idc.AU_CODE)
-            cmt = xdis.cross_dis.format_code_info(co_obj, tuple_version,is_graal=is_graal)
-            idaapi.set_func_cmt(f_ea, fmt_cmt(cmt), 0)
-
-        for c in co_obj.co_consts:
-            if xdis.disasm.iscode(c):
-                walk_co_func(n_ea, c)
-
-    walk_co_func(0, co)
 
     return 1
 
