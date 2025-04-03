@@ -13,6 +13,42 @@ except:
     idaapi.warning("<xdis> python module is not installed!")
 
 
+class CodeObjectManager:
+
+    def __init__ (self, co):
+        self.co_list = []
+        self.co_ea_map = {}
+        self.walk_co_func(0, co)
+        self.co_count = len(self.co_list)
+
+
+    def walk_co_func(self, search_starts_ea, co_obj):
+        f_ea = idaapi.find_bytes(co_obj.co_code, search_starts_ea)
+        n_ea = f_ea + 1
+        if f_ea != idaapi.BADADDR:
+            size = len(co_obj.co_code)
+            n_ea = f_ea + size
+            obj = (co_obj, f_ea, n_ea - 1)
+            self.co_list.append(obj)
+            self.co_ea_map[f_ea] = obj
+
+        for c in co_obj.co_consts:
+            if xdis.disasm.iscode(c):
+                self.walk_co_func(n_ea, c)
+    def get_co_by_ea(self, ea):
+        L, R = 0, self.co_count - 1
+        while L <= R:
+            M = (L + R) // 2
+            co, min_ea, max_ea = self.co_list[M]
+            if ea < min_ea:
+                R = M - 1
+            elif ea > max_ea:
+                L = M + 1
+            else:
+                return co, min_ea, max_ea
+        raise ValueError("No code object found")
+
+
 class PycProcessor(ida_idp.processor_t):
     id = 0x8000 + 0x9977
     flag = ida_idp.PR_NOCHANGE | ida_idp.PR_STACK_UP | ida_idp.PR_NO_SEGMOVE | ida_idp.PRN_DEC | ida_idp.PR_CNDINSNS
@@ -59,7 +95,7 @@ class PycProcessor(ida_idp.processor_t):
         if start_ea not in self.co_map:
             return
 
-        co = self.co_map[start_ea][0]
+        co = self.coManager.co_ea_map[start_ea][0]
         is_graal = idaapi.pyc_info[2] in xdis.magics.GRAAL3_MAGICS
         cmt = xdis.cross_dis.format_code_info(co, idaapi.pyc_info[0], is_graal=is_graal)
         idaapi.set_func_cmt(start_ea, fmt_cmt(cmt), 0)
@@ -100,12 +136,8 @@ class PycProcessor(ida_idp.processor_t):
         if op_type != ida_ua.o_idpspec0:
             addr = op.addr
             if addr < self.current_co_start_ea or addr >self.current_co_end_ea:
-                self.current_co = None
-                for o in self.co_list:
-                    if addr >= o[1] and addr <= o[2]:
-                        co, self.current_co_start_ea, self.current_co_end_ea = o
-                        self.current_co = co
-                        break
+                co, self.current_co_start_ea, self.current_co_end_ea = self.coManager.get_co_by_ea(addr)
+                self.current_co = co
             else:
                 co = self.current_co
             color = ida_lines.COLOR_MACRO
@@ -122,6 +154,7 @@ class PycProcessor(ida_idp.processor_t):
                 txt = idaapi.get_name(target_addr)
                 if not txt:
                     txt = f'({hex(target_addr)})'
+                ctx.out_addr_tag(target_addr)
             elif op_type == ida_ua.o_far:
                 color = ida_lines.COLOR_DEFAULT
                 target_addr = op_value+self.current_co_start_ea
@@ -129,6 +162,7 @@ class PycProcessor(ida_idp.processor_t):
                 txt = idaapi.get_name(target_addr)
                 if not txt:
                     txt = f'({hex(target_addr)})'
+                ctx.out_addr_tag(target_addr)
             else:
                 color = ida_lines.COLOR_ERROR
                 txt = '<UNKNOWN>'
@@ -241,42 +275,27 @@ class PycProcessor(ida_idp.processor_t):
 
         print(f"Fetching all code objects in {filename} ...")
 
-        self.co_list = []
-        self.co_map = {}
+        self.coManager = CodeObjectManager(idaapi.pyc_info[3])
 
-        def walk_co_func(search_starts_ea, co_obj):
-            f_ea = idaapi.find_bytes(co_obj.co_code, search_starts_ea)
-            n_ea = f_ea + 1
-            if f_ea != idaapi.BADADDR:
-                size = len(co_obj.co_code)
-                n_ea = f_ea + size
-                fn = co_obj.co_name.replace("<", "_").replace(">", "_")
-                '''
-                seg = idaapi.segment_t()
-                # Create the segment
-                seg.start_ea = f_ea
-                seg.end_ea = f_ea + size
-                idaapi.add_segm_ex(seg, '', "CODE", 0)
-                '''
-                obj = (co_obj, f_ea, n_ea - 1)
-                self.co_list.append(obj)
-                self.co_map[f_ea] = obj
-                if search_starts_ea == 0:
-                    idaapi.add_entry(0, f_ea, "_start", False)
-                    # idaapi.add_func(f_ea)
-                else:
-                    # idaapi.add_func(f_ea, n_ea)
-                    idaapi.set_name(f_ea, fn)
-                # Mark for analysis
-                ida_auto.auto_make_proc(f_ea)
-                # cmt = xdis.cross_dis.format_code_info(co_obj, tuple_version,is_graal=is_graal)
-                # idaapi.set_func_cmt(f_ea, fmt_cmt(cmt), 0)
+        for i in range(self.coManager.co_count):
+            co, f_ea, n_ea = self.coManager.co_list[i]
+            fn = co.co_name.replace("<", "_").replace(">", "_")
+            '''
+            # Create the segment
+            seg = idaapi.segment_t()
+            seg.start_ea = f_ea
+            seg.end_ea = f_ea + size
+            idaapi.add_segm_ex(seg, '', "CODE", 0)
+            '''
+            if i == 0:
+                idaapi.add_entry(0, f_ea, "_start", False)
+                # idaapi.add_func(f_ea)
+            else:
+                # idaapi.add_func(f_ea, n_ea)
+                idaapi.set_name(f_ea, fn)
+            # Mark for analysis
+            ida_auto.auto_make_proc(f_ea)
 
-            for c in co_obj.co_consts:
-                if xdis.disasm.iscode(c):
-                    walk_co_func(n_ea, c)
-
-        walk_co_func(0, idaapi.pyc_info[3])
 
     def __init__(self):
         ida_idp.processor_t.__init__(self)
@@ -293,8 +312,7 @@ class PycProcessor(ida_idp.processor_t):
         self.has_rebuild_cf = False
         self.dst2src = {}
 
-        self.co_list = None
-        self.co_map = None
+        self.coManager = None
 
         self.current_co = None
         self.current_co_start_ea = 0
