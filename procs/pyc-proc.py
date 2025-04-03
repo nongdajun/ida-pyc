@@ -1,13 +1,21 @@
-import idc
 import idaapi
-from idc import *
-from idaapi import *
-import io
+import idc
+import ida_idp
+import ida_xref
+import ida_auto
+import ida_ua
+import ida_lines
 
 
-class PycProcessor(idaapi.processor_t):
+try:
+    import xdis
+except:
+    idaapi.warning("<xdis> python module is not installed!")
+
+
+class PycProcessor(ida_idp.processor_t):
     id = 0x8000 + 0x9977
-    flag = PR_ADJSEGS | PRN_HEX | PR_ASSEMBLE
+    flag = ida_idp.PR_NOCHANGE | ida_idp.PR_STACK_UP | ida_idp.PR_NO_SEGMOVE | ida_idp.PRN_DEC | ida_idp.PR_CNDINSNS
     cnbits = 8
     dnbits = 8
     psnames = ["pyc"]
@@ -17,7 +25,7 @@ class PycProcessor(idaapi.processor_t):
     reg_names = ["SP"]
     assembler = {
         "header": [".magic"],
-        "flag": AS_NCHRE | ASH_HEXF0 | ASD_DECF0 | ASO_OCTF0 | ASB_BINF0,
+        "flag": ida_idp.AS_NCHRE | ida_idp.ASH_HEXF0 | ida_idp.ASD_DECF0 | ida_idp.ASO_OCTF0 | ida_idp.ASB_BINF0,
         "uflag": 0,
         "name": "python bytecode assembler",
         "origin": ".org",
@@ -48,11 +56,10 @@ class PycProcessor(idaapi.processor_t):
 
     def notify_add_func(self, start_ea):
         # print(f"ADD FUNC @{hex(start_ea)}, {idaapi.get_name(start_ea)}")
-        if start_ea not in idaapi.co_map:
+        if start_ea not in self.co_map:
             return
 
-        import xdis
-        co = idaapi.co_map[start_ea][0]
+        co = self.co_map[start_ea][0]
         is_graal = idaapi.pyc_info[2] in xdis.magics.GRAAL3_MAGICS
         cmt = xdis.cross_dis.format_code_info(co, idaapi.pyc_info[0], is_graal=is_graal)
         idaapi.set_func_cmt(start_ea, fmt_cmt(cmt), 0)
@@ -60,17 +67,17 @@ class PycProcessor(idaapi.processor_t):
     def notify_emu(self, insn):
         feature = insn.get_canon_feature()
 
-        flows = (feature & CF_STOP) == 0
+        flows = (feature & ida_idp.CF_STOP) == 0
 
         #if feature & CF_JUMP:
         #    add_cref(insn.ea, insn.ea + 10, fl_JN)
         #elif feature & CF_CALL:
         #    add_cref(insn.ea, insn.ea + insn.size, fl_CN)
 
-        if flows and (feature & CF_JUMP) == 0:
-            add_cref(insn.ea, insn.ea + insn.size, fl_F)
+        if flows and (feature & ida_idp.CF_JUMP) == 0:
+            ida_xref.add_cref(insn.ea, insn.ea + insn.size, ida_xref.fl_F)
 
-        if may_trace_sp():
+        if ida_auto.may_trace_sp():
             if flows:
                 self.trace_sp(insn)
             else:
@@ -83,48 +90,47 @@ class PycProcessor(idaapi.processor_t):
 
         if self.last_extend_arg:
             op_value = op.value+self.last_extend_arg*256
-            ctx.out_line(f"{op.value}({op_value})", idaapi.COLOR_DSTR)
+            ctx.out_line(f"{op.value}({op_value})", ida_lines.COLOR_DSTR)
         else:
             op_value = op.value
-            ctx.out_line(str(op_value), idaapi.COLOR_DSTR)
+            ctx.out_line(str(op_value), ida_lines.COLOR_DSTR)
 
         op_type = op.type
 
-        if op_type != o_idpspec0:
+        if op_type != ida_ua.o_idpspec0:
             addr = op.addr
             if addr < self.current_co_start_ea or addr >self.current_co_end_ea:
                 self.current_co = None
-                for o in idaapi.co_list:
+                for o in self.co_list:
                     if addr >= o[1] and addr <= o[2]:
                         co, self.current_co_start_ea, self.current_co_end_ea = o
                         self.current_co = co
-                        # print(f"XXXXXXXXXX{co.co_name}XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
                         break
             else:
                 co = self.current_co
-            color = idaapi.COLOR_MACRO
-            if op_type == o_idpspec1:
+            color = ida_lines.COLOR_MACRO
+            if op_type == ida_ua.o_idpspec1:
                 txt = f'({co.co_consts[op_value]})'
-            elif op_type == o_idpspec2:
+            elif op_type == ida_ua.o_idpspec2:
                 txt = f'({co.co_names[op_value]})'
-            elif op_type == o_idpspec3:
+            elif op_type == ida_ua.o_idpspec3:
                 txt = f'({co.co_varnames[op_value]})'
-            elif op_type == o_near:
-                color = idaapi.COLOR_DEFAULT
+            elif op_type == ida_ua.o_near:
+                color = ida_lines.COLOR_DEFAULT
                 target_addr = op_value+1+addr
-                idaapi.add_cref(addr-1, target_addr, idaapi.fl_JN)
+                idaapi.add_cref(addr-1, target_addr, ida_xref.fl_JN)
                 txt = idaapi.get_name(target_addr)
                 if not txt:
                     txt = f'({hex(target_addr)})'
-            elif op_type == o_far:
-                color = idaapi.COLOR_DEFAULT
+            elif op_type == ida_ua.o_far:
+                color = ida_lines.COLOR_DEFAULT
                 target_addr = op_value+self.current_co_start_ea
-                idaapi.add_cref(addr - 1, target_addr, idaapi.fl_JN)
+                idaapi.add_cref(addr - 1, target_addr, ida_xref.fl_JN)
                 txt = idaapi.get_name(target_addr)
                 if not txt:
                     txt = f'({hex(target_addr)})'
             else:
-                color = idaapi.COLOR_ERROR
+                color = ida_lines.COLOR_ERROR
                 txt = '<UNKNOWN>'
             ctx.out_line(f"\t {txt}", color)
 
@@ -150,18 +156,18 @@ class PycProcessor(idaapi.processor_t):
         op = insn[0]
         # custom type
         if self.instruc_hasconst[itype]:
-            op.type = o_idpspec1
+            op.type = ida_ua.o_idpspec1
         elif self.instruc_hasname[itype]:
-            op.type = o_idpspec2
+            op.type = ida_ua.o_idpspec2
         elif self.instruc_haslocal[itype]:
-            op.type = o_idpspec3
+            op.type = ida_ua.o_idpspec3
         elif self.instruc_hasjrel[itype]:
-            op.type = o_near
+            op.type = ida_ua.o_near
         elif self.instruc_hasjabs[itype]:
-            op.type = o_far
+            op.type = ida_ua.o_far
         else:
-            op.type = o_idpspec0
-        op.dtype = dt_byte
+            op.type = ida_ua.o_idpspec0
+        op.dtype = ida_ua.dt_byte
         op_addr = ea + 1
         op.addr = op_addr  # operand is located after opcode
         op.value = idaapi.get_byte(op_addr)
@@ -205,16 +211,16 @@ class PycProcessor(idaapi.processor_t):
             features = 0 # initially zero
 
             if code in m_opcode.hasnargs: # has immediate
-                features |= CF_USE1
+                features |= ida_idp.CF_USE1
 
             if name in ('INVALID', 'RETURN_VALUE'):
-                features |= CF_STOP
+                features |= ida_idp.CF_STOP
 
             if name.startswith('JUMP_'):
-                features |= CF_JUMP
+                features |= ida_idp.CF_JUMP
 
             if name == "CALL" or name.startswith('CALL_'):
-                features |= CF_CALL
+                features |= ida_idp.CF_CALL
 
             self.instruc[code] = {'name': name, 'feature':features}
 
@@ -228,21 +234,15 @@ class PycProcessor(idaapi.processor_t):
 
         self.instruc_end = len(self.instruc)
 
-    def notify_assemble(self, ea, cs, ip, use32, line):
-        idaapi.warning("Assembler is not supported!")
-        return None
-
     def notify_newfile(self, filename):
 
         idc.make_array(0, 4)
-        idaapi.set_name(0, 'MAGIC')
+        idaapi.set_name(0, '_MAGIC_')
 
         print(f"Fetching all code objects in {filename} ...")
 
-        setattr(idaapi, 'co_list', [])
-        setattr(idaapi, 'co_map', {})
-
-        import xdis
+        self.co_list = []
+        self.co_map = {}
 
         def walk_co_func(search_starts_ea, co_obj):
             f_ea = idaapi.find_bytes(co_obj.co_code, search_starts_ea)
@@ -259,8 +259,8 @@ class PycProcessor(idaapi.processor_t):
                 idaapi.add_segm_ex(seg, '', "CODE", 0)
                 '''
                 obj = (co_obj, f_ea, n_ea - 1)
-                idaapi.co_list.append(obj)
-                idaapi.co_map[f_ea] = obj
+                self.co_list.append(obj)
+                self.co_map[f_ea] = obj
                 if search_starts_ea == 0:
                     idaapi.add_entry(0, f_ea, "_start", False)
                     # idaapi.add_func(f_ea)
@@ -268,7 +268,7 @@ class PycProcessor(idaapi.processor_t):
                     # idaapi.add_func(f_ea, n_ea)
                     idaapi.set_name(f_ea, fn)
                 # Mark for analysis
-                idaapi.auto_make_proc(f_ea)
+                ida_auto.auto_make_proc(f_ea)
                 # cmt = xdis.cross_dis.format_code_info(co_obj, tuple_version,is_graal=is_graal)
                 # idaapi.set_func_cmt(f_ea, fmt_cmt(cmt), 0)
 
@@ -279,7 +279,7 @@ class PycProcessor(idaapi.processor_t):
         walk_co_func(0, idaapi.pyc_info[3])
 
     def __init__(self):
-        processor_t.__init__(self)
+        ida_idp.processor_t.__init__(self)
 
         self.reg_names = ["SP", "vCS", "vDS"]
         self.reg_first_sreg = self.reg_names.index("vCS")
@@ -292,6 +292,9 @@ class PycProcessor(idaapi.processor_t):
 
         self.has_rebuild_cf = False
         self.dst2src = {}
+
+        self.co_list = None
+        self.co_map = None
 
         self.current_co = None
         self.current_co_start_ea = 0
