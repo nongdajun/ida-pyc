@@ -101,6 +101,12 @@ class PycProcessor(ida_idp.processor_t):
             if name == 'EXTENDED_ARG':
                 self.icode_extend_arg = code
 
+            if name == 'CALL_FUNCTION':
+                self.icode_call_function = code
+
+            if name == 'CALL_METHOD':
+                self.icode_call_method = code
+
         self.instruc_end = len(self.instruc)
 
     def notify_newfile(self, filename):

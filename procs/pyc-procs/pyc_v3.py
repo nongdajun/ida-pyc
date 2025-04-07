@@ -91,6 +91,18 @@ class PycNew38Processor(pyc_base.PycProcessor):
                 ctx.out_line(f"   ({hex(target_addr)})", color)
             ctx.out_addr_tag(target_addr)
 
+        if op.specflag4: # CALLS
+            if op_type == self.icode_call_function:
+                paddr = addr - 3 - (op_value * 2)
+                ctx.out_addr_tag(paddr)
+                ctx.out_line(f"   >>> [{hex(paddr)}](...)↑")
+            elif op_type == self.icode_call_method:
+                paddr = addr - 3 - (op_value * 2)
+                ctx.out_addr_tag(paddr-2)
+                ctx.out_line(f"   >>> [{hex(paddr-2)}]")
+                ctx.out_addr_tag(paddr)
+                ctx.out_line(f".[{hex(paddr)}](...)↑")
+
         return
 
     def notify_out_insn(self, ctx):
@@ -134,6 +146,7 @@ class PycNew38Processor(pyc_base.PycProcessor):
             else:
                 op.specflag1 = 0
             op.specflag3 = 1 if feature & ida_idp.CF_USE1 else 0
+            op.specflag4 = 1 if feature & ida_idp.CF_CALL else 0 # CALLS
         else:
             op.specval = 0
 
