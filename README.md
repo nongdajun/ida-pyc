@@ -6,7 +6,7 @@
 
 * support python compiled bytecode version from  python1 to python3 (the same as 'xdis' does)
 
-* has more features (like jump xref, ...) for compiled  bytecode after python3.8 (more older versions will be add if ...)
+* has more features (like jump xref, ...) for python3 compiled  bytecode  (more older versions will be add if ...)
 
   
 

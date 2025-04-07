@@ -6,7 +6,7 @@ import ida_lines
 import pyc_base
 
 
-class PycSimpleProcessor(pyc_base.PycProcessor):
+class PycNew38Processor(pyc_base.PycProcessor):
 
     def notify_emu(self, insn):
         ###print(f"notify_emu={ea}")
@@ -15,12 +15,31 @@ class PycSimpleProcessor(pyc_base.PycProcessor):
 
         flows = (feature & ida_idp.CF_STOP) == 0
 
+        if feature & ida_idp.CF_JUMP:
+            op = insn[0]
+            itype = insn.itype
+
+            if self.instruc_hasjrel[itype]:
+                if feature & ida_idp.CF_USE1: # backward jump
+                    target_addr = 2 + ea - op.value
+                else:
+                    target_addr = 2 + ea + op.value
+            elif self.instruc_hasjabs[itype]:
+                self.get_current_co(ea)
+                target_addr = op.value + self.current_co_start_ea
+            else:
+                target_addr = idaapi.BADADDR
+            idaapi.add_cref(ea, target_addr, ida_xref.fl_JN)
+            if (feature & ida_idp.CF_USE2) == 0: #not condition jump
+                flows = False
+
         if flows:
             ida_xref.add_cref(ea, ea + 2, ida_xref.fl_F)
 
         return 1
 
     def notify_out_operand(self, ctx, op):
+
         if op.specval == 0:
             ctx.out_line(str(op.value).rjust(3, ' '), ida_lines.COLOR_HIDNAME)
             return
@@ -49,6 +68,28 @@ class PycSimpleProcessor(pyc_base.PycProcessor):
         if map_attr_name:
             co = self.get_current_co(addr)
             ctx.out_line(f"   ({getattr(co, map_attr_name)[op_value]})", ida_lines.COLOR_MACRO)
+
+        if self.instruc_hasjrel[op_type]:
+            color = ida_lines.COLOR_DEFAULT
+            if op.specflag3:  # backward jump
+                target_addr = 1 + addr - op_value
+            else:
+                target_addr = 1 + addr + op_value
+            txt = idaapi.get_name(target_addr)
+            if txt:
+                ctx.out_line(f"   {txt}", color)
+            else:
+                ctx.out_line(f"   ({hex(target_addr)})", color)
+            ctx.out_addr_tag(target_addr)
+        elif self.instruc_hasjabs[op_type]:
+            color = ida_lines.COLOR_DEFAULT
+            target_addr = op_value + self.current_co_start_ea
+            txt = idaapi.get_name(target_addr)
+            if txt:
+                ctx.out_line(f"   {txt}", color)
+            else:
+                ctx.out_line(f"   ({hex(target_addr)})", color)
+            ctx.out_addr_tag(target_addr)
 
         return
 
@@ -111,4 +152,4 @@ class PycSimpleProcessor(pyc_base.PycProcessor):
 
 
 def PROCESSOR_ENTRY():
-    return PycSimpleProcessor()
+    return PycNew38Processor()

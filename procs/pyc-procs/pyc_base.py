@@ -1,10 +1,7 @@
 import idaapi
 import idc
 import ida_idp
-import ida_xref
 import ida_auto
-import ida_ua
-import ida_lines
 import xdis
 from CoObjectManager import CoObjectManager
 
@@ -48,7 +45,6 @@ class PycProcessor(ida_idp.processor_t):
     }
 
     def notify_add_func(self, start_ea):
-        # print(f"ADD FUNC @{hex(start_ea)}, {idaapi.get_name(start_ea)}")
         if start_ea not in self.coManager.co_ea_map:
             return
 
@@ -57,7 +53,55 @@ class PycProcessor(ida_idp.processor_t):
         idaapi.set_func_cmt(start_ea, idaapi.my_fmt_cmt(cmt), 0)
 
     def init_instructions(self):
-        raise NotImplementedError()
+        self.instruc = [] # why is there no T in this?
+
+        m_opcode = idaapi.pyc_info[8]
+        if not m_opcode:
+            self.instruc.append({'name':"<ERROR>", 'feature':0})
+            self.instruc_end = 1
+            return -1
+
+        self.instruc_hasoperand = [True if m_opcode.opname[i].startswith('<') else False for i in range(256)]
+        for aname in dir(m_opcode):
+            if not aname.startswith('has'):
+                continue
+            codes = getattr(m_opcode, aname)
+            setattr(self, f'instruc_{aname}', tuple(i in codes for i in range(256)))
+            for code in codes:
+                self.instruc_hasoperand[code] = True
+        self.instruc_hasoperand = tuple(self.instruc_hasoperand)
+
+        for i in range(256):
+            self.instruc.append({'name':f"<{i}>", 'feature':0})
+
+        for (name, code) in m_opcode.opmap.items(): #_table.iteritems():
+            features = 0 # initially zero
+
+            if code in m_opcode.hasnargs: # has immediate
+                features |= ida_idp.CF_USE1
+
+            if name in ('INVALID', 'RETURN_VALUE'):
+                features |= ida_idp.CF_STOP
+
+            if code in m_opcode.hasjrel or code in m_opcode.hasjabs:
+                features |= ida_idp.CF_JUMP
+                if "BACKWARD" in name:
+                    features |= ida_idp.CF_USE1  #backward jump
+                if "_IF_" in name:
+                    features |= ida_idp.CF_USE2  #condition jump
+
+            if code in m_opcode.callop:
+                features |= ida_idp.CF_CALL
+
+            self.instruc[code] = {'name': name, 'feature':features}
+
+            if name == 'RETURN_VALUE':
+                self.icode_return = code
+
+            if name == 'EXTENDED_ARG':
+                self.icode_extend_arg = code
+
+        self.instruc_end = len(self.instruc)
 
     def notify_newfile(self, filename):
 
@@ -76,15 +120,26 @@ class PycProcessor(ida_idp.processor_t):
             seg = idaapi.segment_t()
             seg.start_ea = f_ea
             seg.end_ea = f_ea + size
-            idaapi.add_segm_ex(seg, 'co', "CODE", 0)
+            idaapi.add_segm_ex(seg, 'co', None, idaapi.ADDSEG_NOAA)
             if i == 0:
-                idaapi.add_entry(0, f_ea, "_start", True)
+                idaapi.add_entry(0, f_ea, "_start", False)
                 #idaapi.add_func(f_ea)
             else:
                 #idaapi.add_func(f_ea)
                 idaapi.set_name(f_ea, fn)
             # Mark for analysis
             ida_auto.auto_make_proc(f_ea)
+
+        idc.auto_wait()
+        #print("*****************AUTO_DONE*********************")
+
+    def get_current_co(self, addr):
+        if addr < self.current_co_start_ea or addr > self.current_co_end_ea:
+            co, self.current_co_start_ea, self.current_co_end_ea = self.coManager.get_co_by_ea(addr)
+            self.current_co = co
+            return co
+        else:
+            return self.current_co
 
     def __init__(self):
         ida_idp.processor_t.__init__(self)
