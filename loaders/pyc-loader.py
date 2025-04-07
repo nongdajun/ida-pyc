@@ -19,12 +19,15 @@ def accept_file(li, filename):
                 is_pypy(magic_int, filename),
                 source_size,
                 sip_hash,
+                
+                is_graal,
+                opcode,
             )
             """
             ret = xdis.load.load_module_from_file_object(li, filename, None, False, True)
-            setattr(idaapi, 'pyc_info', ret)
+            is_graal = ret[2] in xdis.magics.GRAAL3_MAGICS
             m_opcode = xdis.get_opcode(ret[0], ret[4])
-            setattr(idaapi, 'pyc_opcode', m_opcode)
+            setattr(idaapi, 'pyc_info', ret + (is_graal, m_opcode))
         except Exception as ex:
             idaapi.warning(f"[WARN] Pyc loader failed to run: {ex}")
             return 0
@@ -41,6 +44,8 @@ def load_file(li, neflags, format):
     if buf_size < 16:
         return 0
 
+    setattr(idaapi, 'my_fmt_cmt', my_fmt_cmt)
+
     # Select the PC processor module
     idaapi.set_processor_type("Pyc", idc.SETPROC_LOADER_NON_FATAL)
 
@@ -49,10 +54,10 @@ def load_file(li, neflags, format):
     # Copy the bytes
     idaapi.mem2base(buf, 0, buf_size)
 
-    seg_pyc = idaapi.segment_t()
-    seg_pyc.start_ea = 0
-    seg_pyc.end_ea = buf_size
-    idaapi.add_segm_ex(seg_pyc, ".pyc", None, 0)
+    seg_magic = idaapi.segment_t()
+    seg_magic.start_ea = 0
+    seg_magic.end_ea = 4
+    idaapi.add_segm_ex(seg_magic, ".magic", None, 0)
 
     h_out = io.StringIO()
     (
@@ -63,11 +68,11 @@ def load_file(li, neflags, format):
         is_pypy,
         source_size,
         sip_hash,
+        is_graal,
+        opcode
     ) = idaapi.pyc_info
 
     import xdis
-
-    is_graal = magic_int in xdis.magics.GRAAL3_MAGICS
 
     xdis.disasm.show_module_header(tuple_version,
                                    co,
@@ -81,8 +86,8 @@ def load_file(li, neflags, format):
                                    show_filename=True,
                                    is_graal=is_graal)
 
-    idaapi.set_segment_cmt(seg_pyc, f"{fmt_cmt(h_out.getvalue())}\nPress [Ctrl+F5] to decompile...\n", 0)
-
+    idaapi.set_segment_cmt(seg_magic, f"{my_fmt_cmt(h_out.getvalue())}\nPress [Ctrl+F5] or [Alt+F5] to decompile...\n", 0)
+    
     class DocstringViewer(idaapi.Form):
         """A form that displays a docstring."""
 
@@ -117,11 +122,12 @@ def load_file(li, neflags, format):
         f, args = f.Compile()
         f.Open()
 
-    idaapi.add_hotkey("Ctrl+F5", _ctrl_f5_pressed)
+    idaapi.add_hotkey("Ctrl+F5", lambda :_ctrl_f5_pressed())
+    idaapi.add_hotkey("Alt+F5", lambda :_ctrl_f5_pressed())
 
     return 1
 
-def fmt_cmt(s):
+def my_fmt_cmt(s):
     if s.startswith("# "):
         return "\n".join([i[2:] for i in s.split("\n")])
     return s
