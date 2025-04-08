@@ -73,7 +73,11 @@ class PycSimpleProcessor(pyc_base.PycProcessor):
 
         if map_attr_name:
             co = self.get_current_co(addr)
-            ctx.out_line(f"   ({getattr(co, map_attr_name)[op_value]})", ida_lines.COLOR_MACRO)
+            try:
+                u_name = getattr(co, map_attr_name)[op_value]
+            except Exception as ex:
+                u_name = f"EXCEPTION:\x01\x10{ex.__str__()}\x02\x10"
+            ctx.out_line(f"   ({u_name})", ida_lines.COLOR_MACRO)
 
         return
 

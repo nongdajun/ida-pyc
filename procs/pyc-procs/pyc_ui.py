@@ -94,8 +94,16 @@ def Pyc_do_patch():
             idaapi.patch_bytes(ea, bytes([b1, b2]))
             break
         else:
-            idaapi.patch_bytes(ea, b1)
+            idaapi.patch_byte(ea, b1)
             break
+    ida_kernwin.refresh_idaview_anyway()
+
+
+def Pyc_do_change_opcode(opcode):
+    ea = ida_kernwin.get_screen_ea()
+    if ea == idc.BADADDR:
+        return
+    idaapi.patch_byte(ea, opcode)
     ida_kernwin.refresh_idaview_anyway()
 
 
@@ -105,8 +113,9 @@ class Pyc_View_Hooks(ida_kernwin.View_Hooks):
     def __init__(self):
         ida_kernwin.View_Hooks.__init__(self)
 
-    def view_dblclick(self, view, ev):
-        Pyc_do_patch()
+    #def view_dblclick(self, view, ev):
+    #    if ev.button & ida_kernwin.VME_RIGHT_BUTTON:
+    #        Pyc_do_patch()
 
 
 class Pyc_UI_Hooks(ida_kernwin.UI_Hooks):
@@ -116,13 +125,23 @@ class Pyc_UI_Hooks(ida_kernwin.UI_Hooks):
         self.current_highlight_at = None
         self.current_highlight_targets = []
 
+    def finish_populating_widget_popup(self, widget, popup):
+        w_type = ida_kernwin.get_widget_type(widget)
+        if w_type != ida_kernwin.BWN_DISASM:
+            return
+        idaapi.attach_action_to_popup(widget, popup, 'patch_menu_cust', None)
+
+        global pyc_change_op_actions
+        for a, d in pyc_change_op_actions:
+            idaapi.attach_action_to_popup(widget, popup, a, f"* Change selected opercode/ {d}... /")
+
     def screen_ea_changed(self, ea, prev_ea):
 
         if self.current_highlight_at == ea:
             return
 
-        form_type = ida_kernwin.get_widget_type(ida_kernwin.get_current_widget())
-        if form_type != ida_kernwin.BWN_DISASM:
+        w_type = ida_kernwin.get_widget_type(ida_kernwin.get_current_widget())
+        if w_type != ida_kernwin.BWN_DISASM:
             return
 
         #print(f"screen_ea_changed->{hex(ea)}")
@@ -175,6 +194,8 @@ def Pyc_Commnent_Handler(is_repeatable):
 pyc_view_hooks = Pyc_View_Hooks()
 pyc_ui_hooks = Pyc_UI_Hooks()
 
+pyc_change_op_actions = []
+
 def init():
     pyc_info = idaapi.pyc_info
     tuple_version, is_pypy = pyc_info[0], pyc_info[4]
@@ -186,3 +207,33 @@ def init():
     ida_kernwin.add_hotkey(";", lambda: Pyc_Commnent_Handler(True))
     ida_kernwin.add_hotkey(":", lambda: Pyc_Commnent_Handler(False))
     ida_kernwin.add_hotkey("e", lambda: Pyc_do_patch())
+
+    ah = idaapi.action_handler_t()
+    ah.update = lambda o: idaapi.AST_ENABLE_ALWAYS
+    ah.activate = lambda o: Pyc_do_patch()
+    idaapi.register_action(idaapi.action_desc_t("patch_menu_cust", "* Patch selected bytecode...", ah, None, None, 0))
+
+    class change_opercode_handler(idaapi.action_handler_t):
+
+        def __init__(self, opcode):
+            idaapi.action_handler_t.__init__(self)
+            self.opcode = opcode
+
+        def activate(self, ctx):
+            Pyc_do_change_opcode(self.opcode)
+            return True
+
+        def update(self, ctx):
+            return idaapi.AST_ENABLE_ALWAYS
+
+    global pyc_change_op_actions
+    m_opcode = idaapi.pyc_info[8]
+    keys = sorted(m_opcode.opmap.keys())
+    for k in keys:
+        m_name = f"patch_menu_chg_{k}"
+        opcode = m_opcode.opmap[k]
+        ah = change_opercode_handler(opcode)
+        idaapi.register_action(idaapi.action_desc_t(m_name, f"{k} ={opcode}", ah, None, None, 0))
+        pyc_change_op_actions.append((m_name, k[:1]))
+
+

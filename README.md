@@ -39,7 +39,9 @@ cp -r procs/pyc-procs  ${YOU_IDA_HOME_DIR}/procs/
 
 ![image-20250407095020194](imgs/image-20250407095020194.png)
 
+![image-20250408163833699](imgs/image-20250408163833699.png)
+
 **press 'Ctrl+F5' or 'Alt+F5' to decompile the pyc file**
 
-**press 'e' or 'double click' to patch the code**
+**press 'e'  to patch the code**
 
