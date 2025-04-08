@@ -108,7 +108,7 @@ def load_file(li, neflags, format):
                                    show_filename=True,
                                    is_graal=is_graal)
 
-    idaapi.set_segment_cmt(seg_magic, f"{my_fmt_cmt(h_out.getvalue())}\nPress [Ctrl+F5] or [Alt+F5] to decompile...\n", 0)
+    idaapi.set_segment_cmt(seg_magic, f"{my_fmt_cmt(h_out.getvalue())}\nPress [\x01\x10Ctrl+F5\x02\x10] or [\x01\x10Alt+F5\x02\x10] to decompile...\nPress [\x01\x10e\x02\x10] or [\x01\x10Double click\x02\x10] to patch the code...\n", 0)
     
     class DocstringViewer(idaapi.Form):
         """A form that displays a docstring."""

@@ -162,6 +162,7 @@ class PycProcessor(ida_idp.processor_t):
             ida_auto.auto_make_proc(f_ea)
 
         idc.auto_wait()
+        __import__('pyc_ui').init()
         #print("*****************AUTO_DONE*********************")
 
     def get_current_co(self, addr):
