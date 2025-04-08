@@ -107,6 +107,26 @@ def Pyc_do_change_opcode(opcode):
     ida_kernwin.refresh_idaview_anyway()
 
 
+APPLY_PATCH_OUTPUT_FILE = None
+
+def Pyc_apple_patches():
+    global APPLY_PATCH_OUTPUT_FILE
+    if not APPLY_PATCH_OUTPUT_FILE:
+        APPLY_PATCH_OUTPUT_FILE = f"{idaapi.get_input_file_path()}.patched.pyc"
+    ret = ida_kernwin.ask_file(True, APPLY_PATCH_OUTPUT_FILE, ".pyc")
+    if not ret:
+        return
+    with open(idaapi.get_input_file_path(), "rb") as rf:
+        buf = bytearray(rf.read())
+        def visit_patched_bytes(ea, fpos, org_val, patch_val):
+            buf[ea] = patch_val
+        if idaapi.visit_patched_bytes(0, 0, visit_patched_bytes) == 0:
+            with open(ret, "wb") as wf:
+                wf.write(buf)
+                APPLY_PATCH_OUTPUT_FILE = ret
+                ida_kernwin.info("Apply patches success!")
+
+
 #IDA View Hooks
 class Pyc_View_Hooks(ida_kernwin.View_Hooks):
 
@@ -129,11 +149,15 @@ class Pyc_UI_Hooks(ida_kernwin.UI_Hooks):
         w_type = ida_kernwin.get_widget_type(widget)
         if w_type != ida_kernwin.BWN_DISASM:
             return
-        idaapi.attach_action_to_popup(widget, popup, 'patch_menu_cust', None)
+        idaapi.attach_action_to_popup(widget, popup, 'patch_menu_cust', None, idaapi.SETMENU_ENSURE_SEP)
 
         global pyc_change_op_actions
         for a, d in pyc_change_op_actions:
             idaapi.attach_action_to_popup(widget, popup, a, f"* Change selected opercode/ {d}... /")
+
+        idaapi.attach_action_to_popup(widget, popup, 'PatchedBytes', "* Patch pyc file/")
+        idaapi.attach_action_to_popup(widget, popup, 'patch_menu_apply_patches', "* Patch pyc file/")
+
 
     def screen_ea_changed(self, ea, prev_ea):
 
@@ -212,6 +236,14 @@ def init():
     ah.update = lambda o: idaapi.AST_ENABLE_ALWAYS
     ah.activate = lambda o: Pyc_do_patch()
     idaapi.register_action(idaapi.action_desc_t("patch_menu_cust", "* Patch selected bytecode...", ah, None, None, 0))
+
+    ah = idaapi.action_handler_t()
+    ah.update = lambda o: idaapi.AST_ENABLE_ALWAYS
+    ah.activate = lambda o: Pyc_apple_patches()
+    idaapi.register_action(idaapi.action_desc_t("patch_menu_apply_patches", "Apply patches (save new file) ...", ah, None, None, 0))
+
+    idaapi.attach_action_to_menu(f"Edit/Patch program/", 'patch_menu_apply_patches', idaapi.SETMENU_ENSURE_SEP)
+    ida_kernwin.update_action_visibility('ApplyPatches', False)
 
     class change_opercode_handler(idaapi.action_handler_t):
 
