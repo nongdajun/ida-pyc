@@ -39,4 +39,6 @@ cp -r procs/pyc-procs  ${YOU_IDA_HOME_DIR}/procs/
 
 ![image-20250407095020194](imgs/image-20250407095020194.png)
 
-**按 Ctrl+F5 反编译 pyc 文件**
+**按 Ctrl+F5 或 Alt+F5 反编译 pyc 文件**
+
+**按 e 或 鼠标双击 进行代码修改**

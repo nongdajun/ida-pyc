@@ -79,7 +79,7 @@ def Pyc_do_patch():
             continue
 
         if inp_arr[0] in m_opcode.opmap:
-            b1 = m_opcode.opmap[inp_arr[0]]
+            b1 = m_opcode.opmap[inp_arr[0].upper()]
         else:
             b1 = try_parse_byte(inp_arr[0])
             if b1 is None:
